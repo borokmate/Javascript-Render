@@ -7,10 +7,10 @@ const far = 100;
 const near = 0.01;
 const player_height = 0.5
 const ctx = game.getContext("2d");
-function clear() {
-    ctx.fillStyle = BACKGROUND;
-    ctx.fillRect(0, 0, game.width, game.height);
-}
+// function clear() {
+//     ctx.fillStyle = BACKGROUND;
+//     ctx.fillRect(0, 0, game.width, game.height);
+// }
 
 function point({ x, y }) {
     ctx.fillStyle = FOREGROUND;
@@ -111,7 +111,7 @@ function line(p1, p2) {
     ctx.stroke();
 }
 
-const FPS = 320;
+const FPS = 60;
 let dz = 1;
 let angle = 0
 
@@ -249,6 +249,9 @@ function sub(a, b){
     };
 }
 
+let turn_speed = 0;
+let wireframe = true;
+
 function handle_movement(dt){
     const move = player_speed * dt;
     const turn = player_sens * (Math.PI / 180) * dt;
@@ -278,11 +281,14 @@ function handle_movement(dt){
     if (shift){
         playerY -= move;
     }
+    if (ctrl){
+        turn_speed = 0;
+    }
 
-    // if (keyLeft)  player_yaw   += turn;
-    // if (keyRight) player_yaw   -= turn;
-    // if (upKey)    player_pitch += turn;
-    // if (downKey)  player_pitch -= turn;
+    if (keyLeft)  wireframe = false;
+    if (keyRight) wireframe = true;
+    if (upKey)    turn_speed += 1 * dt;
+    if (downKey)  turn_speed -= 1 * dt;
 }
 
 function world_to_camera(p, cube, row){
@@ -313,13 +319,126 @@ function draw_faces(vertices, faces, normals){
     }
 }
 
+const framebuffer = ctx.createImageData(game.width, game.height);
+const zbuffer = new Float32Array(game.width * game.height);
+
+function hex_to_rgb(hex){
+    return {
+        r: parseInt(hex.slice(1, 3), 16),
+        g: parseInt(hex.slice(3, 5), 16),
+        b: parseInt(hex.slice(5, 7), 16),
+    };
+}
+
+function clear(){
+    const bg = hex_to_rgb(BACKGROUND);
+    const data = framebuffer.data;
+
+    for (let i = 0; i < data.length; i += 4){
+        data[i + 0] = bg.r;
+        data[i + 1] = bg.g;
+        data[i + 2] = bg.b;
+        data[i + 3] = 255;
+    }
+}
+
+
+function clear_zbuffer(){
+    zbuffer.fill(Infinity);
+}
+
+function put_pixel(x, y, z, r, g, b, a){
+    x = Math.floor(x);
+    y = Math.floor(y);
+
+    if (x < 0 || x >= game.width || y < 0 || y >= game.height) return;
+    if (z <= 0) return;
+
+    const zi = y * game.width + x;
+    if (z >= zbuffer[zi]) return;
+
+    zbuffer[zi] = z;
+    const i = zi * 4;
+    const data = framebuffer.data;
+    data[i + 0] = r;
+    data[i + 1] = g;
+    data[i + 2] = b;
+    data[i + 3] = a;
+}
+
+function edge(a, b, p){
+    return (p.x - a.x) * (b.y - a.y) - (p.y - a.y) * (b.x - a.x);
+}
+
+function fill_triangle(v0, v1, v2, color){
+    const minX = Math.max(0, Math.floor(Math.min(v0.x, v1.x, v2.x)));
+    const maxX = Math.min(game.width - 1, Math.ceil(Math.max(v0.x, v1.x, v2.x)));
+    const minY = Math.max(0, Math.floor(Math.min(v0.y, v1.y, v2.y)));
+    const maxY = Math.min(game.height - 1, Math.ceil(Math.max(v0.y, v1.y, v2.y)));
+
+    const area = edge(v0, v1, v2);
+    if (area === 0) return;
+    
+    for (let y = minY; y <= maxY; y++){
+        for (let x = minX; x <= maxX; x++){
+            const p = {x: x + 0.5, y: y + 0.5};
+
+            const w0 = edge(v1, v2, p) / area;
+            const w1 = edge(v2, v0, p) / area;
+            const w2 = edge(v0, v1, p) / area;
+
+            if (w0 < 0 || w1 < 0 || w2 < 0) continue;
+
+            const z = w0 * v0.z + w1 * v1.z + w2 * v2.z;
+
+            put_pixel(x, y, z, color.r, color.g, color.b, 255);
+        }
+    }
+}
+
+function draw_faces_filled(vertices, faces, normals){
+    const color = {r: 90, g: 160, b: 90};
+
+    for (let fi = 0; fi < faces.length; fi++){
+        const f = faces[fi];
+        const n = normals[fi];
+
+        if (f.length !== 4) continue;
+
+        const faceVerts = f.map(i => vertices[i]);
+        const camVerts = faceVerts.map(v => world_to_camera(v, 0, 0));
+
+        if (camVerts.some(v => v.z <= near)) continue;
+
+        const camNormal = rotate_yz(rotate_xz(n, -player_yaw + angle), player_pitch);
+
+        if (dot(camNormal, camVerts[0]) >= 0) continue;
+
+        const s = camVerts.map(v => {
+            const p = to_screen(project(v));
+            return {x: p.x, y: p.y, z: v.z};
+        });
+
+        fill_triangle(s[0], s[1], s[2], color);
+        fill_triangle(s[0], s[2], s[3], color);
+    }
+}
+
 function frame() {
     const dt = 1 / FPS;
     dz += 1 * dt;
-    angle += 5 * dt;
+    angle += turn_speed * dt;
     clear();
+    clear_zbuffer();
     handle_movement(dt);
-    draw_faces(vs, fs, ns)
+
+    if (!wireframe){
+        draw_faces_filled(vs, fs, ns);
+        ctx.putImageData(framebuffer, 0, 0);
+    }else{
+        draw_faces(vs, fs, ns);
+    }
+
 
     setTimeout(frame, 1000 / FPS);
 }

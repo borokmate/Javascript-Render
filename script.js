@@ -7,10 +7,21 @@ const far = 100;
 const near = 0.01;
 const player_height = 0.5
 const ctx = game.getContext("2d");
-// function clear() {
-//     ctx.fillStyle = BACKGROUND;
-//     ctx.fillRect(0, 0, game.width, game.height);
-// }
+
+class Cube{
+    constructor(x_pos, y_pos, z_pos, color) {
+        this.x_pos = x_pos;
+        this.y_pos = y_pos;
+        this.z_pos = z_pos;
+        this.color = color;
+  }
+}
+
+
+function og_clear() {
+    ctx.fillStyle = BACKGROUND;
+    ctx.fillRect(0, 0, game.width, game.height);
+}
 
 function point({ x, y }) {
     ctx.fillStyle = FOREGROUND;
@@ -43,17 +54,26 @@ function project({ x, y, z }) {
     }
 }
 
-const vs = [
-    { x: 0.25, y: 0.25, z: 0.25 },
-    { x: -0.25, y: 0.25, z: 0.25 },
-    { x: -0.25, y: -0.25, z: 0.25 },
-    { x: 0.25, y: -0.25, z: 0.25 },
+const vs = [ // cube at 0.0
+    { x: 0, y: 0, z: 0 },
+    { x: -0.5, y: 0, z: 0 },
+    { x: -0.5, y: -0.5, z: 0 },
+    { x: 0, y: -0.5, z: 0 },
 
-    { x: 0.25, y: 0.25, z: -0.25 },
-    { x: -0.25, y: 0.25, z: -0.25 },
-    { x: -0.25, y: -0.25, z: -0.25 },
-    { x: 0.25, y: -0.25, z: -0.25 },
+    { x: 0, y: 0, z: -0.5 },
+    { x: -0.5, y: 0, z: -0.5 },
+    { x: -0.5, y: -0.5, z: -0.5 },
+    { x: 0, y: -0.5, z: -0.5 },
 ]
+
+const faceNeighbors = [
+    {x: 0, y: 0, z: 1},   // front
+    {x: 0, y: 0, z: -1},  // back
+    {x: 1, y: 0, z: 0},   // right
+    {x: -1, y: 0, z: 0},  // left
+    {x: 0, y: 1, z: 0},   // top
+    {x: 0, y: -1, z: 0},  // bottom
+];
 
 const ns = [
     {x:  0, y:  0, z:  1}, // front
@@ -72,6 +92,7 @@ const fs = [
     [0, 1, 5, 4], // top
     [3, 2, 6, 7], // bottom
 ];
+
 
 function translate_z({ x, y, z }, dz) {
     return { x, y, z: z + dz };
@@ -101,9 +122,9 @@ function rotate_yz({x, y, z}, angle){
     };
 }
 
-function line(p1, p2) {
+function line(p1, p2, color) {
     if (p1 == null || p2 == null) return;
-    ctx.strokeStyle = FOREGROUND;
+    ctx.strokeStyle = color;
     ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.moveTo(p1.x, p1.y);
@@ -111,7 +132,7 @@ function line(p1, p2) {
     ctx.stroke();
 }
 
-const FPS = 60;
+const FPS = 1000;
 let dz = 1;
 let angle = 0
 
@@ -291,19 +312,56 @@ function handle_movement(dt){
     if (downKey)  turn_speed -= 1 * dt;
 }
 
-function world_to_camera(p, cube, row){
-    return rotate_yz(rotate_xz(translate(rotate_xz(p, angle), -playerX - 0.5 * cube, -playerY - player_height, -playerZ - 0.5 * row), -player_yaw), player_pitch);
+const cube_map = new Map();
+const cubes = [];
+
+function key(x, y, z){
+    return `${x},${y},${z}`;
 }
 
-function draw_faces(vertices, faces, normals){
+function setCube(x, y, z, cube){
+    cubes.push(cube);
+    cube_map.set(key(x, y, z), cube);
+}
+
+function getCube(x, y, z){
+    return cube_map.get(key(x, y, z)) ?? null;
+}
+
+function hasCube(x, y, z){
+    return cube_map.has(key(x, y, z));
+}
+
+setCube(1, -1, 2, new Cube(1, -1, 2, "#2f3d26"));
+
+// for (let x = 0; x < 15; x++){
+//     for (let z = 0; z < 15; z++){
+//         if (x === 13 && z === 5) continue;
+//         setCube(x, -1, z, new Cube(x, -1, z, "#2f3d26"));
+//     }
+// }
+
+
+function world_to_camera(p, x, y, z){
+    return rotate_yz(rotate_xz(translate(rotate_xz(p, angle), -playerX + x * 0.5, -playerY + y * 0.5, -playerZ + z * 0.5), -player_yaw), player_pitch);
+}
+
+function draw_faces(cube, vertices, faces, normals){
     for (let fi = 0; fi < faces.length; fi++){
+        const offset = faceNeighbors[fi];
+
+        if (hasCube(
+            cube.x_pos + offset.x,
+            cube.y_pos + offset.y,
+            cube.z_pos + offset.z
+        )) continue;
         const f = faces[fi];
         const n = normals[fi];
 
-        const camVerts = f.map(i => world_to_camera(vertices[i], 0, 0));
+        const camVerts = f.map(i => world_to_camera(vertices[i], cube.x_pos, cube.y_pos, cube.z_pos));
         if (camVerts.some(v => v.z <= 0)) continue;
 
-        const camNormal = rotate_yz(rotate_xz(n, -player_yaw + angle), player_pitch);
+        const camNormal = rotate_yz(rotate_xz(n, -player_yaw), player_pitch);
 
         if (dot(camNormal, camVerts[0]) >= 0) continue;
 
@@ -396,31 +454,127 @@ function fill_triangle(v0, v1, v2, color){
     }
 }
 
-function draw_faces_filled(vertices, faces, normals){
-    const color = {r: 90, g: 160, b: 90};
+const lightDir = {x: 0.5, y: 1.0, z: 0.5};
+const lightLen = Math.sqrt(lightDir.x**2 + lightDir.y**2 + lightDir.z**2);
+lightDir.x /= lightLen; lightDir.y /= lightLen; lightDir.z /= lightLen;
+const ambientLight = 0.2;
 
-    for (let fi = 0; fi < faces.length; fi++){
-        const f = faces[fi];
-        const n = normals[fi];
+function draw_faces_filled(cube, vertices, faces, normals) {
+    for (let fi = 0; fi < faces.length; fi++) {
+        const offset = faceNeighbors[fi];
+        if (hasCube(
+            cube.x_pos + offset.x,
+            cube.y_pos + offset.y,
+            cube.z_pos + offset.z
+        )) continue;
 
-        if (f.length !== 4) continue;
+        const f    = faces[fi];
+        const n    = normals[fi];
+        const uvs  = faceUVs[fi];
 
-        const faceVerts = f.map(i => vertices[i]);
-        const camVerts = faceVerts.map(v => world_to_camera(v, 0, 0));
-
+        const camVerts = f.map(i =>
+            world_to_camera(vertices[i], cube.x_pos, cube.y_pos, cube.z_pos)
+        );
         if (camVerts.some(v => v.z <= near)) continue;
 
-        const camNormal = rotate_yz(rotate_xz(n, -player_yaw + angle), player_pitch);
-
+        const camNormal = rotate_yz(rotate_xz(n, -player_yaw), player_pitch);
         if (dot(camNormal, camVerts[0]) >= 0) continue;
+
+        // diffuse lighting against world-space normal
+        const light = Math.min(1, ambientLight + Math.max(0, dot(n, lightDir)));
 
         const s = camVerts.map(v => {
             const p = to_screen(project(v));
-            return {x: p.x, y: p.y, z: v.z};
+            return { x: p.x, y: p.y, z: v.z };
         });
 
-        fill_triangle(s[0], s[1], s[2], color);
-        fill_triangle(s[0], s[2], s[3], color);
+        // split quad into two triangles — [0,1,2] and [0,2,3]
+        fill_triangle(s[0], s[1], s[2], uvs[0], uvs[1], uvs[2], light);
+        fill_triangle(s[0], s[2], s[3], uvs[0], uvs[2], uvs[3], light);
+    }
+}
+
+let texData, texWidth, texHeight;
+
+async function loadTexture(url) {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    const oc = new OffscreenCanvas(img.width, img.height);
+    const octx = oc.getContext("2d");
+    octx.drawImage(img, 0, 0);
+    const id = octx.getImageData(0, 0, img.width, img.height);
+    texData   = id.data;
+    texWidth  = img.width;
+    texHeight = img.height;
+}
+
+const faceUVs = [
+    [{u:0,v:0},{u:1,v:0},{u:1,v:1},{u:0,v:1}], // front
+    [{u:0,v:0},{u:1,v:0},{u:1,v:1},{u:0,v:1}], // back
+    [{u:0,v:0},{u:1,v:0},{u:1,v:1},{u:0,v:1}], // right
+    [{u:0,v:0},{u:1,v:0},{u:1,v:1},{u:0,v:1}], // left
+    [{u:0,v:0},{u:1,v:0},{u:1,v:1},{u:0,v:1}], // top
+    [{u:0,v:0},{u:1,v:0},{u:1,v:1},{u:0,v:1}], // bottom
+];
+
+function sample_texture(u, v) {
+    // wrap
+    u = u - Math.floor(u);
+    v = v - Math.floor(v);
+    const tx = Math.floor(u * texWidth)  % texWidth;
+    const ty = Math.floor(v * texHeight) % texHeight;
+    const ti = (ty * texWidth + tx) * 4;
+    return {
+        r: texData[ti],
+        g: texData[ti + 1],
+        b: texData[ti + 2],
+    };
+}
+
+function fill_triangle(v0, v1, v2, uv0, uv1, uv2, light) {
+    const minX = Math.max(0, Math.floor(Math.min(v0.x, v1.x, v2.x)));
+    const maxX = Math.min(game.width  - 1, Math.ceil(Math.max(v0.x, v1.x, v2.x)));
+    const minY = Math.max(0, Math.floor(Math.min(v0.y, v1.y, v2.y)));
+    const maxY = Math.min(game.height - 1, Math.ceil(Math.max(v0.y, v1.y, v2.y)));
+
+    const area = edge(v0, v1, v2);
+    if (area === 0) return;
+
+    // precompute reciprocals for perspective correction
+    const invZ0 = 1 / v0.z;
+    const invZ1 = 1 / v1.z;
+    const invZ2 = 1 / v2.z;
+
+    const u0_z = uv0.u * invZ0,  v0_z = uv0.v * invZ0;
+    const u1_z = uv1.u * invZ1,  v1_z = uv1.v * invZ1;
+    const u2_z = uv2.u * invZ2,  v2_z = uv2.v * invZ2;
+
+    for (let y = minY; y <= maxY; y++) {
+        for (let x = minX; x <= maxX; x++) {
+            const p = { x: x + 0.5, y: y + 0.5 };
+
+            const w0 = edge(v1, v2, p) / area;
+            const w1 = edge(v2, v0, p) / area;
+            const w2 = edge(v0, v1, p) / area;
+
+            if (w0 < 0 || w1 < 0 || w2 < 0) continue;
+
+            const z = w0 * v0.z + w1 * v1.z + w2 * v2.z;
+
+            // perspective-correct UV
+            const invZ = w0 * invZ0 + w1 * invZ1 + w2 * invZ2;
+            const u = (w0 * u0_z + w1 * u1_z + w2 * u2_z) / invZ;
+            const v = (w0 * v0_z + w1 * v1_z + w2 * v2_z) / invZ;
+
+            const c = sample_texture(u, v);
+            put_pixel(x, y, z,
+                c.r * light,
+                c.g * light,
+                c.b * light,
+                255
+            );
+        }
     }
 }
 
@@ -428,19 +582,23 @@ function frame() {
     const dt = 1 / FPS;
     dz += 1 * dt;
     angle += turn_speed * dt;
-    clear();
-    clear_zbuffer();
+    
     handle_movement(dt);
 
-    if (!wireframe){
-        draw_faces_filled(vs, fs, ns);
-        ctx.putImageData(framebuffer, 0, 0);
-    }else{
-        draw_faces(vs, fs, ns);
+    clear();
+    clear_zbuffer();
+    for (const c of cubes) {
+        draw_faces_filled(c, vs, fs, ns);
     }
-
+    ctx.putImageData(framebuffer, 0, 0);
+    coords.innerText = `Player Coords: ${playerX}, ${playerY}, ${playerZ}`;
 
     setTimeout(frame, 1000 / FPS);
 }
 
-setTimeout(frame, 1000 / FPS);
+async function init() {
+    await loadTexture("dirt.png");
+    setTimeout(frame, 1000 / FPS);
+}
+
+init();
